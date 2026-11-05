@@ -1,8 +1,0 @@
-id = "tetrasquared/hello"
-name = "Hello"
-version = "1.0.0"
-plugin_api = 3
-
-[[widget]]
-id = "hello"
-entry = "bar_widget.luau"

@@ -1,3 +1,4 @@
+local PANEL_ID = "tetrasquared/mal-tracker:list-ui"
 
 function update()
     noctalia.setUpdateInterval(1000)
@@ -6,5 +7,5 @@ function update()
 end
 
 function onClick()
-    noctalia.notify("MyAnimeList Tracker", "clicked")
+    noctalia.togglePanel(PANEL_ID)
 end
