@@ -1,0 +1,13 @@
+id = "tetrasquared/mal-tracker"
+name = "MyAnimeList (Unofficial)"
+version = "1.0.0"
+plugin_api = 3
+author = "tetrasquared"
+icon = "device-tv"
+description = "update mal anime and manga lists, no site needed"
+tags = ["media", "service"]
+
+
+[[widget]]
+id = "mal-tracker"
+entry = "widget.luau"

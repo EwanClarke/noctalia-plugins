@@ -1,4 +1,4 @@
-id = "mal/hello"
+id = "tetrasquared/hello"
 name = "Hello"
 version = "1.0.0"
 plugin_api = 3
