@@ -41,7 +41,9 @@ end
 
 local function logout()
     -- clear login token and list contents
-    noctalia.readFile(DATA_DIR .. "/auth.json")
+    noctalia.removeFile(DATA_DIR .. "/auth.json")
+
+
 
     currentView = "login"
     render()
@@ -185,7 +187,7 @@ local function buildList()
     end)
 
     return ui.column({}, {
-        ui.button({text = "back", onClick = logout}),
+        ui.button({text = "logout", onClick = logout}),
         ui.row({}, {
             ui.label({text = "Hello, " .. noctalia.state.get("mal:username")})
         })
@@ -210,10 +212,8 @@ end
 function onOpen()
     local authenticated = DATA_DIR and (DATA_DIR .. "/auth.json")
 
-    if authenticated then
+    if authenticated and noctalia.fileExists(DATA_DIR .. "/auth.json") then
         currentView = "list"
-    else
-        currentView = "login"
     end
 
     render()
