@@ -1,16 +1,17 @@
-local charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-._~"
 local DATA_DIR = noctalia.pluginDataDir()
 local render
 
 local currentView = "login" -- "login" | "code" | "list" | "item"
+local currentList = "anime" -- "anime" | "manga"
 local clientId
 local pendingVerifier = nil
 local enteredCode = ""
-
-type animeListItem = {name : string}
-type mangaListItem = {name : string}
+local animeList = {}
+local mangaList = {}
+local listLoaded = false
 
 local function generateCodeVerifier()
+    local charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-._~"
     local characters = {}
 
     for _ = 1, 128 do
@@ -124,6 +125,82 @@ local function fetchUserProfile(onDone: (any) -> ())
     end)
 end
 
+local function fetchAnimeList(offset: number, limit: number, onDone : (any) -> ())
+    local token = getAccessToken()
+    if not token then
+        noctalia.notifyError("MAL", "Not logged in")
+        return
+    end
+
+    -- add loading state
+
+    noctalia.http({
+        url = "https://api.myanimelist.net/v2/users/@me/animelist?fields=list_status,num_episodes"
+            .. "&offset=" .. tostring(offset)
+            .. "&limit=" .. tostring(limit),
+        method = "GET",
+        headers = {
+            "Authorization: Bearer " .. token,
+            "Accept: application/json"
+        }
+    }, function(response)
+        if response.ok and response.status == 200 then
+            local decoded = noctalia.json.decode(response.body)
+            onDone(decoded.data)
+        else
+            noctalia.notifyError("MAL", "Failed to fetch anime list")
+        end
+    end)
+
+
+end
+
+local function fetchMangaList(offset: number, limit: number, onDone : (any) -> ())
+    local token = getAccessToken()
+    if not token then
+        noctalia.notifyError("MAL", "Not logged in")
+        return
+    end
+
+    noctalia.http({
+        url = "https://api.myanimelist.net/v2/users/@me/mangalist?fields=list_status,num_chapters"
+            .. "&offset=" .. tostring(offset)
+            .. "&limit=" .. tostring(limit),
+        method = "GET",
+        headers = {
+            "Authorization: Bearer " .. token,
+            "Accept: application/json"
+        }
+    }, function(response)
+        if response.ok and response.status == 200 then
+            local decoded = noctalia.json.decode(response.body)
+            onDone(decoded.data)
+        else
+            noctalia.notifyError("MAL", "Failed to fetch manga list")
+        end
+    end)
+end
+
+local function loadCurrentList()
+    if currentList == "anime" then
+        if #animeList == 0 or not listLoaded then
+            fetchAnimeList(0, 5, function(decoded)
+                animeList = decoded
+                listLoaded = true
+                render()
+            end)
+        end
+    else
+        if #mangaList == 0 or not listLoaded then
+            fetchMangaList(0, 5, function(decoded)
+                mangaList = decoded
+                listLoaded = true
+                render()
+            end)
+        end
+    end
+end
+
 local function onSelectItem()
     currentView = "item"
     render()
@@ -143,8 +220,7 @@ local function buildLogin()
         ui.row({height = 36, align = "center"}, {
             ui.label({text = "Connect to your MAL account to start tracking!"})
         }),
-        ui.row({height = 36, align = "center", justify = "space_between"}, {
-            ui.label({text = ""}),
+        ui.row({height = 36, align = "center", justify = "end"}, {
             ui.button({text = "Login with MAL", variant = "primary", onClick = onLoginClicked})
         })
     })
@@ -177,26 +253,166 @@ local function buildCode()
     })
 end
 
-local function buildList()
+local function buildAnimeRow(entry)
+    local anime = entry.node
+    local status = entry.list_status
 
-    -- get user information
-    fetchUserProfile(function(profile)
-        local username = profile.name
+    local currentEp = (status and status.num_episodes_watched) or 0
+    local totalEp = anime.num_episodes or 0
 
-        noctalia.state.set("mal:username", username)
-    end)
+    local isCompleted = (status and status.status == "completed") or (totalEp > 0 and currentEp >= totalEp)
+    local totalEpDisplay = (totalEp > 0) and tostring(totalEp) or "?"
 
-    return ui.column({}, {
-        ui.button({text = "logout", onClick = logout}),
-        ui.row({}, {
-            ui.label({text = "Hello, " .. noctalia.state.get("mal:username")})
-        })
+    local rowContent = {
+        ui.column({
+            flexGrow = 1,
+            gap = 4,
+            align = "start",
+        }, {
+            ui.label({
+                text = anime.title,
+                fontWeight = "semibold",
+                maxWidth = 320,
+            }),
+            ui.label({
+                text = string.format("Ep %d / %s", currentEp, totalEpDisplay),
+                fontSize = 12,
+                opacity = 0.7
+            }),
+        }),
+    }
 
-    })
+    if not isCompleted then
+        table.insert(rowContent, ui.button({
+                text = "+1",
+                variant = "secondary",
+                controlSize = "sm",
+                onClick = function()
+                    -- Update episode count
+                    noctalia.notify("MAL", "Incremented " .. anime.title)
+                end
+            })
+        )
+    end
+
+    return ui.row({
+        padding = 8,
+        gap = 12,
+        align = "center",
+        justify = "space_between"
+    }, rowContent)
 end
 
-local function buildItem()
+local function buildMangaRow(entry)
+    local manga = entry.node
+    local status = entry.list_status
 
+    local currentChptr = (status and status.num_chapters_read) or 0
+    local totalChptr = manga.num_chapters or 0
+
+    local isCompleted = (status and status.status == "completed") or (totalChptr > 0 and currentChptr >= totalChptr)
+    local totalChptrDisplay = (totalChptr > 0) and tostring(totalChptr) or "?"
+
+    local rowContent = {
+        ui.column({
+            flexGrow = 1,
+            gap = 4,
+            align = "start",
+        }, {
+            ui.label({
+                text = manga.title,
+                fontWeight = "semibold",
+                maxWidth = 320,
+            }),
+            ui.label({
+                text = string.format("Ch %d / %s", currentChptr, totalChptrDisplay),
+                fontSize = 12,
+                opacity = 0.7
+            }),
+        }),
+    }
+
+    if not isCompleted then
+        table.insert(rowContent, ui.button({
+                text = "+1",
+                variant = "secondary",
+                controlSize = "sm",
+                onClick = function()
+                    -- Update episode count
+                    noctalia.notify("MAL", "Incremented " .. manga.title)
+                end
+            })
+        )
+    end
+
+    return ui.row({
+        padding = 8,
+        gap = 12,
+        align = "center",
+        justify = "space_between"
+    }, rowContent)
+end
+
+local function buildList()
+    local username = noctalia.state.get("mal:username") or "User"
+
+    local rowElements = {}
+
+    if not listLoaded then
+        table.insert(rowElements, ui.row({padding = 16, justify = "center"}, {
+            ui.label({text = "Loading " .. currentList .. " list...", opacity = 0.6})
+        }))
+    else
+        if currentList == "anime" then
+            for _, item in ipairs(animeList) do
+                table.insert(rowElements, buildAnimeRow(item))
+                table.insert(rowElements, ui.separator({ opacity = 0.3 }))
+            end
+        else
+            for _, item in ipairs(mangaList) do
+                table.insert(rowElements, buildMangaRow(item))
+                table.insert(rowElements, ui.separator({ opacity = 0.3 }))
+            end
+        end
+    end
+
+    return ui.column({align = "stretch"}, {
+        ui.button({text = "logout", onClick = logout}),
+        ui.row({justify = "center"}, {
+            ui.button({
+                text = "anime",
+                onClick = function()
+                    if currentList == "manga" then
+                        currentList = "anime"
+                        listLoaded = false
+                        loadCurrentList()
+                        render()
+                    end
+                end
+            }),
+            ui.button({
+                text = "manga",
+                onClick = function()
+                    if currentList == "anime" then
+                        currentList = "manga"
+                        listLoaded = false
+                        loadCurrentList()
+                        render()
+                    end
+                end
+            })
+        }),
+        ui.row({},{
+            ui.label({text = "Hello " .. username})
+        }),
+        ui.row({height = 280}, {
+            ui.scroll({
+                flexGrow = 1,
+                align = "stretch",
+                gap = 4,
+            }, rowElements)
+        })
+    })
 end
 
 render = function()
@@ -212,8 +428,16 @@ end
 function onOpen()
     local authenticated = DATA_DIR and (DATA_DIR .. "/auth.json")
 
-    if authenticated and noctalia.fileExists(DATA_DIR .. "/auth.json") then
+    if authenticated and noctalia.fileExists(authenticated) then
         currentView = "list"
+        if not noctalia.state.get("mal:username") then
+            fetchUserProfile(function(profile)
+                local username = profile.name
+
+                noctalia.state.set("mal:username", username)
+            end)
+        end
+        loadCurrentList()
     end
 
     render()
