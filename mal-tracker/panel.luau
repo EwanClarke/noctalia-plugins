@@ -1,7 +1,7 @@
 local DATA_DIR = noctalia.pluginDataDir()
 local render
 
-local currentView = "login" -- "login" | "code" | "list" | "item"
+local currentView = "login" -- "login" | "code" | "list" | "entry"
 local currentList = "anime" -- "anime" | "manga"
 local clientId
 local pendingVerifier = nil
@@ -9,6 +9,7 @@ local enteredCode = ""
 local animeList = {}
 local mangaList = {}
 local listLoaded = false
+local currentEntry = nil
 
 local function generateCodeVerifier()
     local charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-._~"
@@ -135,7 +136,7 @@ local function fetchAnimeList(offset: number, limit: number, onDone : (any) -> (
     -- add loading state
 
     noctalia.http({
-        url = "https://api.myanimelist.net/v2/users/@me/animelist?fields=list_status,num_episodes"
+        url = "https://api.myanimelist.net/v2/users/@me/animelist?fields=list_status,num_episodes,alternative_titles"
             .. "&offset=" .. tostring(offset)
             .. "&limit=" .. tostring(limit),
         method = "GET",
@@ -163,7 +164,7 @@ local function fetchMangaList(offset: number, limit: number, onDone : (any) -> (
     end
 
     noctalia.http({
-        url = "https://api.myanimelist.net/v2/users/@me/mangalist?fields=list_status,num_chapters"
+        url = "https://api.myanimelist.net/v2/users/@me/mangalist?fields=list_status,num_chapters,alternative_titles"
             .. "&offset=" .. tostring(offset)
             .. "&limit=" .. tostring(limit),
         method = "GET",
@@ -184,7 +185,7 @@ end
 local function loadCurrentList()
     if currentList == "anime" then
         if #animeList == 0 or not listLoaded then
-            fetchAnimeList(0, 5, function(decoded)
+            fetchAnimeList(0, 10, function(decoded)
                 animeList = decoded
                 listLoaded = true
                 render()
@@ -192,7 +193,7 @@ local function loadCurrentList()
         end
     else
         if #mangaList == 0 or not listLoaded then
-            fetchMangaList(0, 5, function(decoded)
+            fetchMangaList(0, 10, function(decoded)
                 mangaList = decoded
                 listLoaded = true
                 render()
@@ -201,8 +202,9 @@ local function loadCurrentList()
     end
 end
 
-local function onSelectItem()
-    currentView = "item"
+local function onSelectEntry(entry)
+    currentView = "entry"
+    currentEntry = entry
     render()
 end
 
@@ -253,6 +255,15 @@ local function buildCode()
     })
 end
 
+local function getDisplayTitle(node)
+    local alt = node.alternative_titles
+    if alt and alt.en and alt.en ~= "" then
+        return alt.en
+    else
+        return node.title
+    end
+end
+
 local function buildAnimeRow(entry)
     local anime = entry.node
     local status = entry.list_status
@@ -263,6 +274,8 @@ local function buildAnimeRow(entry)
     local isCompleted = (status and status.status == "completed") or (totalEp > 0 and currentEp >= totalEp)
     local totalEpDisplay = (totalEp > 0) and tostring(totalEp) or "?"
 
+    local title = getDisplayTitle(anime)
+
     local rowContent = {
         ui.column({
             flexGrow = 1,
@@ -270,7 +283,7 @@ local function buildAnimeRow(entry)
             align = "start",
         }, {
             ui.label({
-                text = anime.title,
+                text = title,
                 fontWeight = "semibold",
                 maxWidth = 320,
             }),
@@ -289,7 +302,7 @@ local function buildAnimeRow(entry)
                 controlSize = "sm",
                 onClick = function()
                     -- Update episode count
-                    noctalia.notify("MAL", "Incremented " .. anime.title)
+                    noctalia.notify("MAL", "Incremented " .. title)
                 end
             })
         )
@@ -299,7 +312,10 @@ local function buildAnimeRow(entry)
         padding = 8,
         gap = 12,
         align = "center",
-        justify = "space_between"
+        justify = "space_between",
+        onClick = function()
+            onSelectEntry(entry)
+        end
     }, rowContent)
 end
 
@@ -313,6 +329,8 @@ local function buildMangaRow(entry)
     local isCompleted = (status and status.status == "completed") or (totalChptr > 0 and currentChptr >= totalChptr)
     local totalChptrDisplay = (totalChptr > 0) and tostring(totalChptr) or "?"
 
+    local title = getDisplayTitle(manga)
+
     local rowContent = {
         ui.column({
             flexGrow = 1,
@@ -320,7 +338,7 @@ local function buildMangaRow(entry)
             align = "start",
         }, {
             ui.label({
-                text = manga.title,
+                text = title,
                 fontWeight = "semibold",
                 maxWidth = 320,
             }),
@@ -339,7 +357,7 @@ local function buildMangaRow(entry)
                 controlSize = "sm",
                 onClick = function()
                     -- Update episode count
-                    noctalia.notify("MAL", "Incremented " .. manga.title)
+                    noctalia.notify("MAL", "Incremented " .. title)
                 end
             })
         )
@@ -349,7 +367,10 @@ local function buildMangaRow(entry)
         padding = 8,
         gap = 12,
         align = "center",
-        justify = "space_between"
+        justify = "space_between",
+        onClick = function()
+            onSelectEntry(entry)
+        end
     }, rowContent)
 end
 
@@ -364,12 +385,12 @@ local function buildList()
         }))
     else
         if currentList == "anime" then
-            for _, item in ipairs(animeList) do
+            for index, item in ipairs(animeList) do
                 table.insert(rowElements, buildAnimeRow(item))
                 table.insert(rowElements, ui.separator({ opacity = 0.3 }))
             end
         else
-            for _, item in ipairs(mangaList) do
+            for index, item in ipairs(mangaList) do
                 table.insert(rowElements, buildMangaRow(item))
                 table.insert(rowElements, ui.separator({ opacity = 0.3 }))
             end
@@ -377,10 +398,13 @@ local function buildList()
     end
 
     return ui.column({align = "stretch"}, {
-        ui.button({text = "logout", onClick = logout}),
-        ui.row({justify = "center"}, {
+        ui.row({align = "center"}, {
             ui.button({
                 text = "anime",
+                variant = "ghost",
+                contentAlign = "center",
+                flexGrow = 1,
+                selected = (currentList == "anime"),
                 onClick = function()
                     if currentList == "manga" then
                         currentList = "anime"
@@ -390,8 +414,13 @@ local function buildList()
                     end
                 end
             }),
+            ui.separator({orientation = "vertical"}),
             ui.button({
                 text = "manga",
+                variant = "ghost",
+                contentAlign = "center",
+                flexGrow = 1,
+                selected = (currentList == "manga"),
                 onClick = function()
                     if currentList == "anime" then
                         currentList = "manga"
@@ -402,16 +431,65 @@ local function buildList()
                 end
             })
         }),
-        ui.row({},{
-            ui.label({text = "Hello " .. username})
-        }),
-        ui.row({height = 280}, {
+        ui.separator({orientation = "horizontal"}),
+        ui.row({height = 352}, {
             ui.scroll({
                 flexGrow = 1,
                 align = "stretch",
                 gap = 4,
             }, rowElements)
+        }),
+        ui.row({justify = "space_between", align = "center"}, {
+            ui.button({text = "logout", onClick = logout}),
+            ui.label({text = username})
         })
+    })
+end
+
+local function buildEntry(entry, entryType)
+    local info = entry.node
+    local status = entry.list_status
+
+    local mainContent = {}
+
+    if entryType == "anime" then
+        local currentEp = (status and status.num_episodes_watched) or 0
+        local totalEp = info.num_episodes or 0
+
+        local isCompleted = (status and status.status == "completed") or (totalEp > 0 and currentEp >= totalEp)
+        local totalEpDisplay = (totalEp > 0) and tostring(totalEp) or "?"
+
+        table.insert(mainContent, ui.column({}, {
+            ui.label({text = info.title}),
+            ui.label({text = currentEp .. "/" .. totalEpDisplay .. " episodes watched"}),
+            ui.label({text = ""})
+        }))
+
+    elseif entryType == "manga" then
+        local currentChptr = (status and status.num_chapters_read) or 0
+        local totalChptr = info.num_chapters or 0
+
+        local isCompleted = (status and status.status == "completed") or (totalChptr > 0 and currentChptr >= totalChptr)
+        local totalChptrDisplay = (totalChptr > 0) and tostring(totalChptr) or "?"
+
+        table.insert(mainContent, ui.column({}, {
+            ui.label({text = info.title}),
+            ui.label({text = currentChptr .. "/" .. totalChptrDisplay .. " chapters read"}),
+            ui.label({text = ""})
+        }))
+    end
+
+    return ui.column({}, {
+        ui.row({}, {
+            ui.button({
+                text = "back",
+                onClick = function()
+                    currentView = "list"
+                    render()
+                end
+            })
+        }),
+        ui.row({}, mainContent)
     })
 end
 
@@ -422,6 +500,8 @@ render = function()
         panel.render(buildList())
     elseif currentView == "code" then
         panel.render(buildCode())
+    elseif currentView == "entry" then
+        panel.render(buildEntry(currentEntry, currentList))
     end
 end
 
